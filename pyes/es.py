@@ -3,12 +3,18 @@
 from __future__ import absolute_import
 from __future__ import with_statement
 
-try:
-    # For Python >= 2.6
-    import json
+try: # For people who want to rock hard.
+    import ujson as json
+    setattr(json, 'dumps', json.encode)
+    setattr(json, 'loads', json.decode)
+    print "OH YEAH!"
 except ImportError:
-    # For Python < 2.6 or people using a newer version of simplejson
-    import simplejson as json
+    try:
+        # For Python >= 2.6
+        import json
+    except ImportError:
+        # For Python < 2.6 or people using a newer version of simplejson
+        import simplejson as json
 
 import random
 from datetime import date, datetime
@@ -139,9 +145,9 @@ class ElasticSearchModel(DotDict):
             cmd[op_type]['_version'] = meta.version
         if meta.id:
             cmd[op_type]['_id'] = meta.id
-        result.append(json.dumps(cmd, cls=self._meta.connection.encoder))
+        result.append(json.dumps(cmd))
         result.append("\n")
-        result.append(json.dumps(self, cls=self._meta.connection.encoder))
+        result.append(json.dumps(self))
         result.append("\n")
         return ''.join(result)
 
@@ -175,57 +181,6 @@ def _raise_exception_if_bulk_item_failed(bulk_result):
     if len(errors) > 0:
         raise BulkOperationException(errors, bulk_result)
     return None
-
-
-class ESJsonEncoder(json.JSONEncoder):
-    def default(self, value):
-        """Convert rogue and mysterious data types.
-        Conversion notes:
-
-        - ``datetime.date`` and ``datetime.datetime`` objects are
-        converted into datetime strings.
-        """
-
-        if isinstance(value, datetime):
-            return value.isoformat()
-        elif isinstance(value, date):
-            dt = datetime(value.year, value.month, value.day, 0, 0, 0)
-            return dt.isoformat()
-        elif isinstance(value, Decimal):
-            return float(str(value))
-        else:
-            # use no special encoding and hope for the best
-            return value
-
-
-class ESJsonDecoder(json.JSONDecoder):
-    def __init__(self, *args, **kwargs):
-        kwargs['object_hook'] = self.dict_to_object
-        json.JSONDecoder.__init__(self, *args, **kwargs)
-
-    def string_to_datetime(self, obj):
-        """Decode a datetime string to a datetime object
-        """
-        if isinstance(obj, basestring) and len(obj) == 19:
-            try:
-                return datetime(*obj.strptime("%Y-%m-%dT%H:%M:%S")[:6])
-            except:
-                pass
-        return obj
-
-    def dict_to_object(self, d):
-        """
-        Decode datetime value from string to datetime
-        """
-        for k, v in d.items():
-            if isinstance(v, basestring) and len(v) == 19:
-                try:
-                    d[k] = datetime(*time.strptime(v, "%Y-%m-%dT%H:%M:%S")[:6])
-                except ValueError:
-                    pass
-            elif isinstance(v, list):
-                d[k] = [self.string_to_datetime(elem) for elem in v]
-        return DotDict(d)
 
 
 class BaseBulker(object):
@@ -307,11 +262,8 @@ class ES(object):
     ES connection object.
     """
     #static to easy overwrite
-    encoder = ESJsonEncoder
-    decoder = ESJsonDecoder
 
     def __init__(self, server="localhost:9200", timeout=30.0, bulk_size=400,
-                 encoder=None, decoder=None,
                  max_retries=3,
                  default_indices=None,
                  default_types=None,
@@ -335,7 +287,6 @@ class ES(object):
         :param server: the server name, it can be a list of servers.
         :param timeout: timeout for a call
         :param bulk_size: size of bulk operation
-        :param encoder: tojson encoder
         :param max_retries: number of max retries for server if a server is down
         :param basic_auth: Dictionary with 'username' and 'password' keys for HTTP Basic Auth.
         :param model: used to objectify the dictinary. If None, the raw dict is returned.
@@ -382,10 +333,6 @@ class ES(object):
         self.bulker_class = bulker_class
         self._raise_on_bulk_item_failure = raise_on_bulk_item_failure
 
-        if encoder:
-            self.encoder = encoder
-        if decoder:
-            self.decoder = decoder
         if isinstance(server, (str, unicode)):
             self.servers = [server]
         elif isinstance(server, tuple):
@@ -556,7 +503,7 @@ class ES(object):
                 body = body.as_dict()
 
             if isinstance(body, dict):
-                body = json.dumps(body, cls=self.encoder)
+                body = json.dumps(body)
         else:
             body = ""
         request = RestRequest(method=Method._NAMES_TO_VALUES[method.upper()],
@@ -574,10 +521,10 @@ class ES(object):
 
         # handle the response
         try:
-            decoded = json.loads(response.body, cls=self.decoder)
+            decoded = json.loads(response.body)
         except ValueError:
             try:
-                decoded = json.loads(response.body, cls=ESJsonDecoder)
+                decoded = json.loads(response.body)
             except ValueError:
                 # The only known place where we get back a body which can't be
                 # parsed as JSON is when no handler is found for a request URI.
@@ -1168,8 +1115,8 @@ class ES(object):
                 cmd[op_type]['_id'] = id
 
             if isinstance(doc, dict):
-                doc = json.dumps(doc, cls=self.encoder)
-            command = "%s\n%s" % (json.dumps(cmd, cls=self.encoder), doc)
+                doc = json.dumps(doc)
+            command = "%s\n%s" % (json.dumps(cmd), doc)
             self.bulker.add(command)
             return self.flush_bulk()
 
@@ -1293,7 +1240,7 @@ class ES(object):
         if bulk:
             cmd = {"delete": {"_index": index, "_type": doc_type,
                               "_id": id}}
-            self.bulker.add(json.dumps(cmd, cls=self.encoder))
+            self.bulker.add(json.dumps(cmd))
             return self.flush_bulk()
 
         path = self._make_path([index, doc_type, id])
@@ -1315,7 +1262,7 @@ class ES(object):
             body = query.to_query_json()
         elif isinstance(query, dict):
             # A direct set of search parameters.
-            body = json.dumps(query, cls=ES.encoder)
+            body = json.dumps(query)
         else:
             raise InvalidQuery("delete_by_query() must be supplied with a Query object, or a dict")
 
@@ -1420,11 +1367,10 @@ class ES(object):
 
         if hasattr(query, 'to_search_json'):
             # Common case - a Search or Query object.
-            query.encoder = self.encoder
             body = query.to_search_json()
         elif isinstance(query, dict):
             # A direct set of search parameters.
-            body = json.dumps(query, cls=self.encoder)
+            body = json.dumps(query)
         else:
             raise InvalidQuery("search() must be supplied with a Search or Query object, or a dict")
 
@@ -1491,7 +1437,7 @@ class ES(object):
             if isinstance(query, dict):
                 if 'query' in query:
                     query = query['query']
-                query = json.dumps(query, cls=self.encoder)
+                query = json.dumps(query)
             elif hasattr(query, "to_query_json"):
                 query = query.to_query_json(inner=True)
         querystring_args = query_params
@@ -1587,7 +1533,7 @@ class ES(object):
             raise InvalidQuery("create_percolator() must be supplied with a Query object or dict")
             # A direct set of search parameters.
         query.update(kwargs)
-        body = json.dumps(query, cls=self.encoder)
+        body = json.dumps(query)
 
         return self._send_request('PUT', path, body=body)
 
@@ -1616,7 +1562,7 @@ class ES(object):
             body = query.to_query_json()
         elif isinstance(query, dict):
             # A direct set of search parameters.
-            body = json.dumps(query, cls=self.encoder)
+            body = json.dumps(query)
         else:
             raise InvalidQuery("percolate() must be supplied with a Query object, or a dict")
 
@@ -1625,12 +1571,12 @@ class ES(object):
 
 def decode_json(data):
     """ Decode some json to dict"""
-    return json.loads(data, cls=ES.decoder)
+    return json.loads(data)
 
 
 def encode_json(data):
     """ Encode some json to dict"""
-    return json.dumps(data, cls=ES.encoder)
+    return json.dumps(data)
 
 
 class ResultSet(object):

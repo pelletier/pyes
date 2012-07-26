@@ -199,7 +199,7 @@ class Search(EqualityComparableUsingAttributeDictionary):
         search.
 
         """
-        return json.dumps(self.q, cls=ES.encoder)
+        return json.dumps(self.q)
 
 
 class Query(EqualityComparableUsingAttributeDictionary):
@@ -233,7 +233,7 @@ class Query(EqualityComparableUsingAttributeDictionary):
         search.
 
         """
-        return json.dumps(dict(query=self.serialize()), cls=ES.encoder)
+        return json.dumps(dict(query=self.serialize()))
 
     def to_query_json(self):
         """Convert the query to JSON using the query DSL.
@@ -242,7 +242,7 @@ class Query(EqualityComparableUsingAttributeDictionary):
         delete_by_query and reindex.
 
         """
-        return json.dumps(self.serialize(), cls=ES.encoder)
+        return json.dumps(self.serialize())
 
 
 class BoolQuery(Query):
